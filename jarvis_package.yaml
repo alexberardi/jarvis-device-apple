@@ -1,0 +1,13 @@
+name: "apple"
+display_name: "Apple TV & HomePod"
+description: "Apple TV and HomePod control via AirPlay/Companion protocol. Discover and control Apple media players on your LAN."
+version: "1.0.0"
+min_jarvis_version: "0.9.0"
+license: "MIT"
+author:
+  github: "alexberardi"
+categories: ["smart-home", "media"]
+platforms: ["darwin", "linux"]
+keywords: ["apple", "apple tv", "homepod", "airplay", "media player"]
+packages:
+  - name: pyatv
