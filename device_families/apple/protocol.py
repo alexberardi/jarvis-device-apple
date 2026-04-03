@@ -10,7 +10,9 @@ from jarvis_command_sdk import (
     IJarvisDeviceProtocol,
     DiscoveredDevice,
     DeviceControlResult,
+    InputRequest,
     IJarvisButton,
+    JarvisStorage,
 )
 
 try:
@@ -99,9 +101,14 @@ class AppleProtocol(IJarvisDeviceProtocol):
     supported_domains: list[str] = ["media_player"]
     connection_type: str = "lan"
 
+    def __init__(self) -> None:
+        self._storage = JarvisStorage("apple_device")
+        self._pairing_sessions: dict[str, Any] = {}  # session_id -> pairing object
+
     @property
     def supported_actions(self) -> list[IJarvisButton]:
         return [
+            IJarvisButton(button_text="Pair", button_action="pair_start", button_type="primary", button_icon="link"),
             IJarvisButton(button_text="Play", button_action="play", button_type="primary", button_icon="play"),
             IJarvisButton(button_text="Pause", button_action="pause", button_type="secondary", button_icon="pause"),
             IJarvisButton(button_text="Power On", button_action="turn_on", button_type="primary", button_icon="power"),
@@ -191,8 +198,16 @@ class AppleProtocol(IJarvisDeviceProtocol):
         if not ip:
             return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error="No IP address for device")
 
+        # Handle pairing flow
+        if action == "pair_start":
+            return await self._pair_start(device, ip, pyatv)
+        if action == "pair_finish":
+            return await self._pair_finish(device, params, pyatv)
+
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
+        # Load stored credentials if available
+        creds = self._storage.get(f"credentials:{device.entity_id}")
         try:
             configs = await pyatv.scan(loop, hosts=[ip], timeout=5)
             if not configs:
@@ -256,6 +271,98 @@ class AppleProtocol(IJarvisDeviceProtocol):
             return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Control failed: {e}")
         finally:
             atv.close()
+
+    async def _pair_start(self, device: DiscoveredDevice, ip: str, pyatv: Any) -> DeviceControlResult:
+        """Begin pairing — Apple TV shows PIN on screen."""
+        import uuid
+
+        loop = asyncio.get_event_loop()
+        try:
+            configs = await pyatv.scan(loop, hosts=[ip], timeout=5)
+            if not configs:
+                return DeviceControlResult(
+                    success=False, entity_id=device.entity_id, action="pair_start",
+                    error=f"Could not find Apple device at {ip}",
+                )
+
+            config = configs[0]
+            # Try AirPlay pairing first, then Companion
+            from pyatv.const import Protocol
+            pairing_protocol = Protocol.AirPlay
+            for proto in [Protocol.AirPlay, Protocol.Companion]:
+                if config.get_service(proto) is not None:
+                    pairing_protocol = proto
+                    break
+
+            pairing = await pyatv.pair(config, pairing_protocol, loop)
+            await pairing.begin()
+
+            session_id = str(uuid.uuid4())
+            self._pairing_sessions[session_id] = {
+                "pairing": pairing,
+                "device": device,
+                "protocol": pairing_protocol,
+            }
+
+            logger.info(f"Apple pairing started for {device.name}, session={session_id[:8]}")
+
+            return DeviceControlResult(
+                success=True, entity_id=device.entity_id, action="pair_start",
+                input_required=InputRequest(
+                    type="pin",
+                    prompt=f"Enter the PIN shown on {device.name}",
+                    session_id=session_id,
+                    follow_up_action="pair_finish",
+                ),
+            )
+        except Exception as e:
+            return DeviceControlResult(
+                success=False, entity_id=device.entity_id, action="pair_start",
+                error=f"Failed to start pairing: {e}",
+            )
+
+    async def _pair_finish(self, device: DiscoveredDevice, params: dict[str, Any], pyatv: Any) -> DeviceControlResult:
+        """Complete pairing with the PIN entered by the user."""
+        session_id = params.get("session_id", "")
+        pin = params.get("pin", "")
+
+        session = self._pairing_sessions.pop(session_id, None)
+        if not session:
+            return DeviceControlResult(
+                success=False, entity_id=device.entity_id, action="pair_finish",
+                error="Pairing session not found or expired. Try pairing again.",
+            )
+
+        pairing = session["pairing"]
+
+        try:
+            pairing.pin(int(pin))
+            await pairing.finish()
+
+            # Store credentials for future connections
+            if pairing.has_paired:
+                credentials = pairing.service.credentials
+                if credentials:
+                    self._storage.save(f"credentials:{device.entity_id}", {
+                        "protocol": str(session["protocol"]),
+                        "credentials": str(credentials),
+                    })
+                    logger.info(f"Apple pairing complete for {device.name}, credentials stored")
+
+            await pairing.close()
+
+            return DeviceControlResult(
+                success=True, entity_id=device.entity_id, action="pair_finish",
+            )
+        except Exception as e:
+            try:
+                await pairing.close()
+            except Exception:
+                pass
+            return DeviceControlResult(
+                success=False, entity_id=device.entity_id, action="pair_finish",
+                error=f"Pairing failed: {e}",
+            )
 
     async def get_state(self, device: DiscoveredDevice) -> dict[str, Any]:
         try:
