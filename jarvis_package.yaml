@@ -15,5 +15,7 @@ components:
     name: apple
     path: device_families/apple/protocol.py
 
-packages:
-  - name: pyatv
+packages: []
+# pyatv has native dependencies (C++ compiler) and is installed on the node
+# at runtime, not during Pantry container testing. The protocol handles
+# ImportError gracefully.
