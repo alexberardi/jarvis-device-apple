@@ -9,5 +9,11 @@ author:
 categories: ["smart-home", "media"]
 platforms: ["darwin", "linux"]
 keywords: ["apple", "apple tv", "homepod", "airplay", "media player"]
+
+components:
+  - type: device_protocol
+    name: apple
+    path: device_families/apple/protocol.py
+
 packages:
   - name: pyatv
