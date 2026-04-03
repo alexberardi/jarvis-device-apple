@@ -160,15 +160,15 @@ class AppleProtocol(IJarvisDeviceProtocol):
 
             devices.append(
                 DiscoveredDevice(
-                    id=device_id,
+                    entity_id=device_id,
                     name=name or friendly_model or "Apple Device",
                     domain="media_player",
                     protocol=self.protocol_name,
-                    ip=address,
-                    mac=mac,
+                    local_ip=address,
+                    mac_address=mac,
                     model=friendly_model,
                     manufacturer="Apple",
-                    metadata={"device_class": device_class, "raw_model": raw_model},
+                    extra={"device_class": device_class, "raw_model": raw_model},
                 )
             )
 
@@ -182,14 +182,14 @@ class AppleProtocol(IJarvisDeviceProtocol):
             import pyatv
         except ImportError:
             return DeviceControlResult(
-                success=False,
-                message="pyatv is not installed. Run: pip install pyatv",
+                success=False, entity_id=device.entity_id, action=action,
+                error="pyatv is not installed. Run: pip install pyatv",
             )
 
         params = params or {}
-        ip: str = device.ip or ""
+        ip: str = device.local_ip or ""
         if not ip:
-            return DeviceControlResult(success=False, message="No IP address for device")
+            return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error="No IP address for device")
 
         loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
@@ -197,62 +197,63 @@ class AppleProtocol(IJarvisDeviceProtocol):
             configs = await pyatv.scan(loop, hosts=[ip], timeout=5)
             if not configs:
                 return DeviceControlResult(
-                    success=False, message=f"Could not find Apple device at {ip}"
+                    success=False, entity_id=device.entity_id, action=action,
+                    error=f"Could not find Apple device at {ip}"
                 )
             config = configs[0]
         except Exception as e:
-            return DeviceControlResult(success=False, message=f"Scan failed for {ip}: {e}")
+            return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Scan failed for {ip}: {e}")
 
         atv = None
         try:
             atv = await pyatv.connect(config, loop)
         except Exception as e:
-            return DeviceControlResult(success=False, message=f"Failed to connect to {ip}: {e}")
+            return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Failed to connect to {ip}: {e}")
 
         try:
             if action == "turn_on":
                 await atv.power.turn_on()
-                return DeviceControlResult(success=True, message=f"{device.name} powered on")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "turn_off":
                 await atv.power.turn_off()
-                return DeviceControlResult(success=True, message=f"{device.name} powered off")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "play":
                 await atv.remote_control.play()
-                return DeviceControlResult(success=True, message=f"{device.name} playing")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "pause":
                 await atv.remote_control.pause()
-                return DeviceControlResult(success=True, message=f"{device.name} paused")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "stop":
                 await atv.remote_control.stop()
-                return DeviceControlResult(success=True, message=f"{device.name} stopped")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "next":
                 await atv.remote_control.next()
-                return DeviceControlResult(success=True, message=f"{device.name} skipped to next")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "previous":
                 await atv.remote_control.previous()
                 return DeviceControlResult(
-                    success=True, message=f"{device.name} skipped to previous"
+                    success=True, entity_id=device.entity_id, action=action
                 )
 
             elif action == "volume_up":
                 await atv.remote_control.volume_up()
-                return DeviceControlResult(success=True, message=f"{device.name} volume up")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             elif action == "volume_down":
                 await atv.remote_control.volume_down()
-                return DeviceControlResult(success=True, message=f"{device.name} volume down")
+                return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
             else:
-                return DeviceControlResult(success=False, message=f"Unsupported action: {action}")
+                return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Unsupported action: {action}")
 
         except Exception as e:
-            return DeviceControlResult(success=False, message=f"Control failed: {e}")
+            return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Control failed: {e}")
         finally:
             atv.close()
 
@@ -263,7 +264,7 @@ class AppleProtocol(IJarvisDeviceProtocol):
         except ImportError:
             return {"error": "pyatv is not installed"}
 
-        ip: str = device.ip or ""
+        ip: str = device.local_ip or ""
         if not ip:
             return {"error": "No IP address for device"}
 
