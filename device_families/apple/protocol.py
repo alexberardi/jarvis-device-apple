@@ -102,12 +102,12 @@ class AppleProtocol(IJarvisDeviceProtocol):
     @property
     def supported_actions(self) -> list[IJarvisButton]:
         return [
-            IJarvisButton(action="play", label="Play", icon="play"),
-            IJarvisButton(action="pause", label="Pause", icon="pause"),
-            IJarvisButton(action="turn_on", label="Power On", icon="power"),
-            IJarvisButton(action="turn_off", label="Power Off", icon="power-off"),
-            IJarvisButton(action="volume_up", label="Vol Up", icon="volume-plus"),
-            IJarvisButton(action="volume_down", label="Vol Down", icon="volume-minus"),
+            IJarvisButton(button_text="Play", button_action="play", button_type="primary", button_icon="play"),
+            IJarvisButton(button_text="Pause", button_action="pause", button_type="secondary", button_icon="pause"),
+            IJarvisButton(button_text="Power On", button_action="turn_on", button_type="primary", button_icon="power"),
+            IJarvisButton(button_text="Power Off", button_action="turn_off", button_type="secondary", button_icon="power-off"),
+            IJarvisButton(button_text="Vol Up", button_action="volume_up", button_type="secondary", button_icon="volume-plus"),
+            IJarvisButton(button_text="Vol Down", button_action="volume_down", button_type="secondary", button_icon="volume-minus"),
         ]
 
     async def discover(self, timeout: int = 5) -> list[DiscoveredDevice]:
