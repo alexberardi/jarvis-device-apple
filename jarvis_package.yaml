@@ -19,3 +19,12 @@ packages: []
 # pyatv has native dependencies (C++ compiler) and is installed on the node
 # at runtime, not during Pantry container testing. The protocol handles
 # ImportError gracefully.
+
+secrets:
+  - key: LAN_SUBNET
+    scope: node
+    value_type: string
+    description: "LAN subnet prefix for device discovery in Docker (e.g. 10.0.0). Not needed on Pi nodes."
+    is_sensitive: false
+    required: false
+    friendly_name: "LAN Subnet"

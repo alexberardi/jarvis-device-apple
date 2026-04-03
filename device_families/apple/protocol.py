@@ -8,10 +8,12 @@ from typing import Any
 
 from jarvis_command_sdk import (
     IJarvisDeviceProtocol,
+    IJarvisSecret,
     DiscoveredDevice,
     DeviceControlResult,
     InputRequest,
     IJarvisButton,
+    JarvisSecret,
     JarvisStorage,
 )
 
@@ -106,6 +108,25 @@ class AppleProtocol(IJarvisDeviceProtocol):
         self._pairing_sessions: dict[str, Any] = {}  # session_id -> pairing object
 
     @property
+    def required_secrets(self) -> list[IJarvisSecret]:
+        return [
+            JarvisSecret(
+                "LAN_SUBNET", "LAN subnet prefix for device discovery (e.g. 10.0.0)",
+                "node", "string", required=False, is_sensitive=False,
+                friendly_name="LAN Subnet",
+            ),
+        ]
+
+    setup_guide: str = """## Setup
+
+1. Set **LAN Subnet** to your network prefix (e.g. `10.0.0`) — required for Docker nodes
+2. Tap **Scan for Devices** to discover Apple TVs and HomePods
+3. For each device, tap **Pair** — a PIN will appear on your TV
+4. Enter the PIN to complete pairing
+
+Native Pi nodes discover via mDNS automatically (no subnet needed)."""
+
+    @property
     def supported_actions(self) -> list[IJarvisButton]:
         return [
             IJarvisButton(button_text="Pair", button_action="pair_start", button_type="primary", button_icon="link"),
@@ -129,7 +150,23 @@ class AppleProtocol(IJarvisDeviceProtocol):
 
         try:
             loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+
+            # Try mDNS broadcast first (works on native Pi nodes)
             configs = await pyatv.scan(loop, timeout=timeout)
+
+            # If mDNS finds nothing (e.g. Docker), try unicast subnet scan.
+            # Reads LAN_SUBNET secret (e.g. "10.0.0") for the network to scan.
+            if not configs:
+                lan_subnet = self._storage.get_secret("LAN_SUBNET") or ""
+                if lan_subnet:
+                    logger.info(f"mDNS scan empty, trying unicast on {lan_subnet}.x")
+                    for batch_start in range(1, 255, 25):
+                        batch_hosts = [f"{lan_subnet}.{i}" for i in range(batch_start, min(batch_start + 25, 255))]
+                        try:
+                            batch_configs = await pyatv.scan(loop, hosts=batch_hosts, timeout=2)
+                            configs.extend(batch_configs)
+                        except Exception:
+                            pass
         except Exception as e:
             logger.error(f"Apple device discovery failed: {e}")
             return []
