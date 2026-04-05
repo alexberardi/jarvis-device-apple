@@ -157,7 +157,7 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
             # If mDNS finds nothing (e.g. Docker), try unicast subnet scan.
             # Reads LAN_SUBNET secret (e.g. "10.0.0") for the network to scan.
             if not configs:
-                lan_subnet = self._storage.get_secret("LAN_SUBNET") or ""
+                lan_subnet = self._storage.get_secret("LAN_SUBNET", scope="node") or ""
                 if lan_subnet:
                     logger.info(f"mDNS scan empty, trying unicast on {lan_subnet}.x")
                     for batch_start in range(1, 255, 25):
