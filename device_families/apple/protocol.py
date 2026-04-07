@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import socket
+import time
 from typing import Any
 
 from jarvis_command_sdk import (
@@ -103,9 +105,12 @@ class AppleProtocol(IJarvisDeviceProtocol):
     supported_domains: list[str] = ["media_player"]
     connection_type: str = "lan"
 
+    # Pairing sessions expire after 2 minutes (Apple TV PIN display timeout)
+    _PAIRING_SESSION_TTL: int = 120
+
     def __init__(self) -> None:
         self._storage = JarvisStorage("apple_device")
-        self._pairing_sessions: dict[str, Any] = {}  # session_id -> pairing object
+        self._pairing_sessions: dict[str, dict[str, Any]] = {}
 
     @property
     def required_secrets(self) -> list[IJarvisSecret]:
@@ -256,6 +261,25 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
         except Exception as e:
             return DeviceControlResult(success=False, entity_id=device.entity_id, action=action, error=f"Scan failed for {ip}: {e}")
 
+        # Apply stored pairing credentials so pyatv connects as a paired device
+        if creds:
+            try:
+                from pyatv.const import Protocol
+                proto_str: str = creds.get("protocol", "")
+                cred_str: str = creds.get("credentials", "")
+                if proto_str and cred_str:
+                    proto_map: dict[str, Any] = {
+                        "Protocol.AirPlay": Protocol.AirPlay,
+                        "Protocol.Companion": Protocol.Companion,
+                        "Protocol.RAOP": Protocol.RAOP,
+                    }
+                    proto = proto_map.get(proto_str)
+                    if proto:
+                        config.set_credentials(proto, cred_str)
+                        logger.info(f"Loaded {proto_str} credentials for {device.name}")
+            except Exception as e:
+                logger.warning(f"Failed to load credentials for {device.name}: {e}")
+
         atv = None
         try:
             atv = await pyatv.connect(config, loop)
@@ -264,6 +288,12 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
 
         try:
             if action == "turn_on":
+                # Send Wake-on-LAN magic packet first — Apple TVs in deep sleep
+                # don't respond to pyatv's power.turn_on() alone.
+                mac: str = device.mac_address or ""
+                if mac:
+                    self._send_wol(mac)
+                    await asyncio.sleep(1)
                 await atv.power.turn_on()
                 return DeviceControlResult(success=True, entity_id=device.entity_id, action=action)
 
@@ -309,9 +339,56 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
         finally:
             atv.close()
 
+    def _send_wol(self, mac: str) -> None:
+        """Send a Wake-on-LAN magic packet to the given MAC address.
+
+        Sends to both 255.255.255.255 and the LAN subnet broadcast address
+        (e.g. 10.0.0.255) so it works from inside Docker containers.
+        """
+        mac_clean: str = mac.replace(":", "").replace("-", "").replace(".", "")
+        if len(mac_clean) != 12:
+            logger.warning(f"Invalid MAC for WoL: {mac}")
+            return
+        mac_bytes: bytes = bytes.fromhex(mac_clean)
+        magic: bytes = b"\xff" * 6 + mac_bytes * 16
+
+        targets: list[str] = ["255.255.255.255"]
+        lan_subnet: str = self._storage.get_secret("LAN_SUBNET", scope="node") or ""
+        if lan_subnet:
+            targets.append(f"{lan_subnet}.255")
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            for target in targets:
+                try:
+                    sock.sendto(magic, (target, 9))
+                except OSError:
+                    pass
+        logger.info(f"Sent WoL packet to {mac} via {targets}")
+
+    def _cleanup_expired_sessions(self) -> None:
+        """Remove pairing sessions older than _PAIRING_SESSION_TTL seconds."""
+        now: float = time.monotonic()
+        expired: list[str] = [
+            sid for sid, sess in self._pairing_sessions.items()
+            if now - sess.get("created_at", 0) > self._PAIRING_SESSION_TTL
+        ]
+        for sid in expired:
+            session = self._pairing_sessions.pop(sid, None)
+            if session:
+                logger.info(f"Expired pairing session {sid[:8]}")
+                try:
+                    pairing = session.get("pairing")
+                    if pairing:
+                        asyncio.ensure_future(pairing.close())
+                except Exception:
+                    pass
+
     async def _pair_start(self, device: DiscoveredDevice, ip: str, pyatv: Any) -> DeviceControlResult:
         """Begin pairing — Apple TV shows PIN on screen."""
         import uuid
+
+        self._cleanup_expired_sessions()
 
         loop = asyncio.get_event_loop()
         try:
@@ -323,22 +400,53 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
                 )
 
             config = configs[0]
-            # Try AirPlay pairing first, then Companion
+            # Companion is the reliable pairing protocol on modern Apple TVs
+            # (tvOS 15+). AirPlay pairing often times out with
+            # "no response to POST /pair-setup". Try Companion first, then
+            # fall back to AirPlay if Companion isn't advertised.
             from pyatv.const import Protocol
-            pairing_protocol = Protocol.AirPlay
-            for proto in [Protocol.AirPlay, Protocol.Companion]:
-                if config.get_service(proto) is not None:
+            pairing_order: list[Any] = [Protocol.Companion, Protocol.AirPlay]
+            available: list[Any] = [
+                p for p in pairing_order if config.get_service(p) is not None
+            ]
+            if not available:
+                return DeviceControlResult(
+                    success=False, entity_id=device.entity_id, action="pair_start",
+                    error="No pairable protocol found on device",
+                )
+
+            pairing = None
+            pairing_protocol = None
+            last_error: str = ""
+            for proto in available:
+                try:
+                    logger.info(f"Trying {proto.name} pairing for {device.name}")
+                    pairing = await pyatv.pair(config, proto, loop)
+                    await pairing.begin()
                     pairing_protocol = proto
                     break
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"{proto.name} pairing failed for {device.name}: {e}")
+                    if pairing is not None:
+                        try:
+                            await pairing.close()
+                        except Exception:
+                            pass
+                        pairing = None
 
-            pairing = await pyatv.pair(config, pairing_protocol, loop)
-            await pairing.begin()
+            if pairing is None:
+                return DeviceControlResult(
+                    success=False, entity_id=device.entity_id, action="pair_start",
+                    error=f"All pairing protocols failed. Last error: {last_error}",
+                )
 
             session_id = str(uuid.uuid4())
             self._pairing_sessions[session_id] = {
                 "pairing": pairing,
                 "device": device,
                 "protocol": pairing_protocol,
+                "created_at": time.monotonic(),
             }
 
             logger.info(f"Apple pairing started for {device.name}, session={session_id[:8]}")
