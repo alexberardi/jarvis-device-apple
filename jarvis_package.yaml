@@ -22,7 +22,7 @@ packages: []
 
 secrets:
   - key: LAN_SUBNET
-    scope: node
+    scope: integration
     value_type: string
     description: "LAN subnet prefix for device discovery in Docker (e.g. 10.0.0). Not needed on Pi nodes."
     is_sensitive: false

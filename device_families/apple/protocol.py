@@ -117,7 +117,7 @@ class AppleProtocol(IJarvisDeviceProtocol):
         return [
             JarvisSecret(
                 "LAN_SUBNET", "LAN subnet prefix for device discovery (e.g. 10.0.0)",
-                "node", "string", required=False, is_sensitive=False,
+                "integration", "string", required=False, is_sensitive=False,
                 friendly_name="LAN Subnet",
             ),
         ]
@@ -162,7 +162,7 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
             # If mDNS finds nothing (e.g. Docker), try unicast subnet scan.
             # Reads LAN_SUBNET secret (e.g. "10.0.0") for the network to scan.
             if not configs:
-                lan_subnet = self._storage.get_secret("LAN_SUBNET", scope="node") or ""
+                lan_subnet = self._storage.get_secret("LAN_SUBNET", scope="integration") or ""
                 if lan_subnet:
                     logger.info(f"mDNS scan empty, trying unicast on {lan_subnet}.x")
                     for batch_start in range(1, 255, 25):
@@ -353,7 +353,7 @@ Native Pi nodes discover via mDNS automatically (no subnet needed)."""
         magic: bytes = b"\xff" * 6 + mac_bytes * 16
 
         targets: list[str] = ["255.255.255.255"]
-        lan_subnet: str = self._storage.get_secret("LAN_SUBNET", scope="node") or ""
+        lan_subnet: str = self._storage.get_secret("LAN_SUBNET", scope="integration") or ""
         if lan_subnet:
             targets.append(f"{lan_subnet}.255")
 
