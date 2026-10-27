@@ -20,6 +20,10 @@ components:
 # declares. It installs from prebuilt wheels (no compiler) on aarch64 and x86_64.
 packages:
   - name: pyatv
+  # pyatv asks only for srptools>=0.2.0; srptools 2.0 changed SRPClientSession's
+  # constructor and pairing fails ("takes 2 positional arguments but 3 were given").
+  - name: srptools
+    version: "<2"
 
 secrets:
   - key: LAN_SUBNET
