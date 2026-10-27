@@ -1,7 +1,7 @@
 name: "apple"
 display_name: "Apple TV & HomePod"
 description: "Apple TV and HomePod control via AirPlay/Companion protocol. Discover and control Apple media players on your LAN."
-version: "1.0.1"
+version: "1.0.2"
 min_jarvis_version: "0.9.0"
 license: Apache-2.0
 author:
@@ -15,10 +15,15 @@ components:
     name: apple
     path: device_families/apple/protocol.py
 
-packages: []
-# pyatv has native dependencies (C++ compiler) and is installed on the node
-# at runtime, not during Pantry container testing. The protocol handles
-# ImportError gracefully.
+# pyatv is declared like any other dependency: the Python node's own
+# requirements.txt used to supply it, the Go node installs only what a package
+# declares. It installs from prebuilt wheels (no compiler) on aarch64 and x86_64.
+packages:
+  - name: pyatv
+  # pyatv asks only for srptools>=0.2.0; srptools 2.0 changed SRPClientSession's
+  # constructor and pairing fails ("takes 2 positional arguments but 3 were given").
+  - name: srptools
+    version: "<2"
 
 secrets:
   - key: LAN_SUBNET
